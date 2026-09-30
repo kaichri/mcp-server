@@ -1,0 +1,65 @@
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build output
+build/
+dist/
+*.egg-info/
+
+# Local IDE settings
+.idea/
+.vscode/
+
+# Environment variables and local credentials
+.env
+.env.*
+secrets/
+.secrets/
+credentials/
+credentials.json
+credentials.*.json
+secrets.json
+secrets.*.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Logs, local databases and temporary files
+*.log
+logs/
+*.db
+*.db-*
+*.sqlite
+*.sqlite*
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+tmp/
+temp/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,12 @@
+services:
+  mcp-server:
+    build: .
+    container_name: synology-mcp
+    restart: unless-stopped
+
+    ports:
+      - "8000:8000"
+
+    environment:
+      TZ: Europe/Vienna
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN}
