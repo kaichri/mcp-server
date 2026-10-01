@@ -58,6 +58,7 @@ logs/
 *~
 tmp/
 temp/
+data/
 
 # OS metadata
 .DS_Store

@@ -3,20 +3,14 @@ import asyncio
 import json
 import re
 import subprocess
-import os
-import hmac
 import time
-import uvicorn
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 from urllib.parse import urlparse, parse_qs
 
 from mcp.server import MCPServer
 from mcp import Client
 from youtube_transcript_api import YouTubeTranscriptApi
-from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ToolAnnotations
 
 
 # ============================================================
@@ -564,7 +558,7 @@ def _remote_transcript_failed(text: str) -> bool:
 # TIME
 # ============================================================
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 def current_time() -> str:
     return datetime.now().astimezone().isoformat()
 
@@ -573,7 +567,7 @@ def current_time() -> str:
 # WEB / EXA
 # ============================================================
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 async def web_search(
     query: str,
     num_results: int = 5
@@ -593,7 +587,7 @@ async def web_search(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 async def web_fetch(
     url: str
 ) -> str:
@@ -985,7 +979,7 @@ async def _fetch_news_candidate_direct(url: str, interest: dict) -> dict | None:
         return None
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 async def finance_news_candidates(
     interests_json: str,
     max_candidates: int = 6,
@@ -1225,7 +1219,7 @@ async def finance_news_candidates(
 # YOUTUBE - METADATA
 # ============================================================
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 def youtube_metadata(url: str) -> str:
     """Get detailed YouTube metadata without downloading the video."""
 
@@ -1306,7 +1300,7 @@ def youtube_metadata(url: str) -> str:
 # YOUTUBE - TRANSCRIPT
 # ============================================================
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 async def youtube_transcript(
     url: str,
     languages: str = "de,en"
@@ -1413,7 +1407,7 @@ async def youtube_transcript(
 # YOUTUBE - COMMENTS
 # ============================================================
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 def youtube_comments(
     url: str,
     limit: int = 20,
@@ -1525,125 +1519,9 @@ def youtube_comments(
 
 
 # ============================================================
-# AUTHENTICATION
-# ============================================================
-
-class MCPAuthMiddleware(BaseHTTPMiddleware):
-
-    async def dispatch(
-        self,
-        request: Request,
-        call_next
-    ):
-        # ----------------------------------------------------
-        # Compatibility: mcp_dart 2.4.2 keeps sending
-        # MCP-Protocol-Version: 2026-07-28 although the server
-        # negotiated 2025-11-25. The Python SDK then demands the
-        # 2026 _meta envelope and answers 400. Clamp to the
-        # newest version this server supports.
-        # ----------------------------------------------------
-
-        scope_headers = request.scope.get(
-            "headers",
-            []
-        )
-
-        request.scope["headers"] = [
-            (
-                key,
-                b"2025-11-25"
-                if (
-                    key == b"mcp-protocol-version"
-                    and value.decode("latin-1") > "2025-11-25"
-                )
-                else value
-            )
-            for key, value in scope_headers
-        ]
-
-        host = request.headers.get(
-            "host",
-            ""
-        ).split(":")[0].lower()
-
-        # ----------------------------------------------------
-        # LAN access
-        # ----------------------------------------------------
-
-        if host in (
-            "192.168.1.50",
-            "localhost",
-            "127.0.0.1",
-        ):
-            return await call_next(request)
-
-
-        # ----------------------------------------------------
-        # External access
-        # ----------------------------------------------------
-
-        expected_token = os.environ.get(
-            "MCP_AUTH_TOKEN",
-            ""
-        )
-
-        auth_header = request.headers.get(
-            "authorization",
-            ""
-        )
-
-        expected_header = (
-            f"Bearer {expected_token}"
-        )
-
-        if (
-            not expected_token
-            or not hmac.compare_digest(
-                auth_header,
-                expected_header
-            )
-        ):
-            return JSONResponse(
-                {"error": "Unauthorized"},
-                status_code=401,
-                headers={
-                    "WWW-Authenticate": "Bearer",
-                },
-            )
-
-        return await call_next(request)
-
-
-# ============================================================
-# SERVER START
+# SERVER START: separate LAN and authenticated external listeners
 # ============================================================
 
 if __name__ == "__main__":
-
-    security = TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=[
-            "192.168.1.50:8000",
-            "mcp.example.com",
-            "mcp.example.com:443",
-        ],
-        allowed_origins=[
-            "https://mcp.example.com",
-        ],
-    )
-
-    app = mcp.streamable_http_app(
-        transport_security=security,
-        stateless_http=False,
-        json_response=False,
-    )
-
-    app.add_middleware(
-        MCPAuthMiddleware
-    )
-
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8000,
-    )
+    from listeners import main
+    main(mcp)

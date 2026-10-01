@@ -5,8 +5,29 @@ services:
     restart: unless-stopped
 
     ports:
-      - "8000:8000"
+      - "${MCP_LAN_BIND_IP:-192.168.1.50}:8000:8000"
+      - "127.0.0.1:8001:8001"
 
     environment:
       TZ: Europe/Vienna
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN}
+      MCP_PUBLIC_BASE_URL: ${MCP_PUBLIC_BASE_URL:-https://mcp.example.com}
+      MCP_LAN_HOST: ${MCP_LAN_BIND_IP:-192.168.1.50}
+      MCP_OAUTH_USERNAME: ${MCP_OAUTH_USERNAME:?Set MCP_OAUTH_USERNAME in .env}
+      MCP_OAUTH_PASSWORD_HASH_FILE: /run/secrets/oauth_password_hash
+      MCP_OAUTH_DATABASE: /data/oauth.sqlite3
+      MCP_ACCESS_TOKEN_SECONDS: ${MCP_ACCESS_TOKEN_SECONDS:-900}
+      MCP_REFRESH_TOKEN_SECONDS: ${MCP_REFRESH_TOKEN_SECONDS:-2592000}
+      MCP_AUTH_CODE_SECONDS: ${MCP_AUTH_CODE_SECONDS:-120}
+
+    volumes:
+      - oauth-data:/data
+    secrets:
+      - oauth_password_hash
+
+volumes:
+  oauth-data:
+
+secrets:
+  oauth_password_hash:
+    file: ./secrets/oauth-password-hash.txt
