@@ -156,6 +156,14 @@ def test_metadata(apps):
     assert asm["token_endpoint_auth_methods_supported"] == ["none"]
     assert asm["client_id_metadata_document_supported"] is True
     assert asm["authorization_response_iss_parameter_supported"] is True
+    assert asm["issuer"] == BASE
+    assert asm["authorization_endpoint"] == BASE + "/oauth/authorize"
+    assert asm["token_endpoint"] == BASE + "/oauth/token"
+    assert asm["revocation_endpoint"] == BASE + "/oauth/revoke"
+    assert asm["response_types_supported"] == ["code"]
+    assert asm["grant_types_supported"] == ["authorization_code", "refresh_token"]
+    assert asm["scopes_supported"] == ["mcp:read", "mcp:write", "offline_access"]
+    assert asm["revocation_endpoint_auth_methods_supported"] == ["none"]
     assert "offline_access" in asm["scopes_supported"]
     assert "registration_endpoint" not in asm
     assert public.get("/.well-known/oauth-protected-resource/mcp").json() == prm
@@ -171,7 +179,14 @@ def test_full_oauth_flow_identical_tools_and_call(apps):
     token = tokens(public)["access_token"]
     lan_tools, lan_headers = tools_list(lan)
     public_tools, public_headers = tools_list(public, token)
-    assert lan_tools == public_tools
+    for tool in lan_tools:
+        assert tool["_meta"]["securitySchemes"] == [{"type": "noauth"}]
+        assert tool["securitySchemes"] == tool["_meta"]["securitySchemes"]
+    for tool in public_tools:
+        assert tool["_meta"]["securitySchemes"] == [{"type": "oauth2", "scopes": ["mcp:read"]}]
+        assert tool["securitySchemes"] == tool["_meta"]["securitySchemes"]
+    assert [{k: v for k, v in t.items() if k not in ("_meta", "securitySchemes")} for t in lan_tools] == [
+        {k: v for k, v in t.items() if k not in ("_meta", "securitySchemes")} for t in public_tools]
     expected = json.loads(__import__('pathlib').Path("tests/tool_schemas.json").read_text())
     assert {t["name"]: {k: t.get(k) for k in ["inputSchema", "outputSchema"]} for t in lan_tools} == expected
     for tool in lan_tools:

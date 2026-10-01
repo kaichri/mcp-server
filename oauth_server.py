@@ -33,17 +33,15 @@ COOKIE = "__Host-mcp-consent"
 SECURITY_HEADERS = {
     "Cache-Control": "no-store", "Pragma": "no-cache", "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     "Content-Security-Policy": "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
 }
 
 
 def valid_redirect(uri):
-    if not isinstance(uri, str) or len(uri) > 2048 or any(c in uri for c in ("*", "\r", "\n", "\\")):
-        return False
-    parsed = urlsplit(uri)
-    return bool(parsed.scheme == "https" and parsed.hostname == "chatgpt.com"
-                and parsed.port in (None, 443) and not parsed.username and not parsed.password
-                and not parsed.fragment)
+    # Only currently documented ChatGPT callback formats, then exact metadata match.
+    return bool(isinstance(uri, str) and len(uri) <= 2048 and re.fullmatch(
+        r"https://chatgpt\.com(?::443)?/(?:connector_platform_oauth_redirect|connector/oauth/[A-Za-z0-9_-]+)", uri))
 
 
 class Client(ClientMixin):
@@ -219,7 +217,7 @@ class OAuthService(AuthorizationServer):
             with httpx.Client(timeout=5, follow_redirects=False, trust_env=False) as client:
                 with client.stream("GET", client_id, headers={"Accept": "application/json"}) as response:
                     response.raise_for_status()
-                    if response.status_code != 200 or "application/json" not in response.headers.get("content-type", ""):
+                    if response.status_code != 200 or response.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
                         return None
                     body = bytearray()
                     for chunk in response.iter_bytes():
@@ -315,7 +313,7 @@ class OAuthService(AuthorizationServer):
         return JSONResponse({"resource": self.config.resource,
                              "authorization_servers": [self.config.public_base_url],
                              "scopes_supported": ["mcp:read", "mcp:write"],
-                             "bearer_methods_supported": ["header"]})
+                             "bearer_methods_supported": ["header"]}, headers=SECURITY_HEADERS)
 
     async def server_metadata(self, request):
         base = self.config.public_base_url
@@ -327,7 +325,7 @@ class OAuthService(AuthorizationServer):
                              "token_endpoint_auth_methods_supported": ["none"],
                              "revocation_endpoint_auth_methods_supported": ["none"],
                              "client_id_metadata_document_supported": True,
-                             "authorization_response_iss_parameter_supported": True})
+                             "authorization_response_iss_parameter_supported": True}, headers=SECURITY_HEADERS)
 
     def authorize_get_sync(self, pairs):
         if self.store.limited("authorize", 60):
@@ -345,15 +343,19 @@ class OAuthService(AuthorizationServer):
                            (request_id, json.dumps(pairs), digest(csrf), int(time.time()) + 300))
         scope = req.scope or "mcp:read"
         escape = html.escape
+        labels = {"mcp:read": "MCP-Tools zum Lesen und Abrufen verwenden",
+                  "mcp:write": "Schreibzugriff (derzeit keine Schreibtools vorhanden)",
+                  "offline_access": "Verbindung ohne erneute Anmeldung automatisch erneuern"}
+        permissions = "".join("<li>" + escape(labels[s]) + "</li>" for s in scope.split())
         page = f'''<!doctype html><html lang="de"><meta charset="utf-8"><title>MCP Anmeldung</title>
-<h1>Synology MCP</h1><p>ChatGPT Zugriff erlauben: {escape(scope)}</p>
-<p>Client: {escape(req.payload.client_id)}</p>
+<h1>Privater Synology MCP-Server</h1><p>ChatGPT möchte auf deinen privaten MCP-Server zugreifen.</p>
+<p>Mit deiner Anmeldung erlaubst du folgende Berechtigungen:</p><ul>{permissions}</ul>
 <form method="post" action="{escape(self.config.public_base_url)}/oauth/authorize">
 <input type="hidden" name="request_id" value="{request_id}">
 <input type="hidden" name="csrf" value="{csrf}">
 <label>Benutzername <input name="username" autocomplete="username" required maxlength="200"></label>
 <label>Passwort <input type="password" name="password" autocomplete="current-password" required maxlength="1024"></label>
-<button name="decision" value="allow">Anmelden und Zugriff erlauben</button>
+<button name="decision" value="allow">Zugriff erlauben</button>
 <button name="decision" value="deny" formnovalidate>Abbrechen</button></form></html>'''
         response = HTMLResponse(page, headers=SECURITY_HEADERS)
         response.set_cookie(COOKIE, csrf, max_age=300, secure=True, httponly=True, samesite="lax", path="/")

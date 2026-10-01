@@ -24,6 +24,7 @@ def test_real_two_listener_process(tmp_path):
                MCP_OAUTH_PASSWORD_HASH=PasswordHasher().hash("network-test-password-only"),
                MCP_OAUTH_DATABASE=str(tmp_path / "oauth.sqlite3"),
                MCP_AUTH_TOKEN="network-test-legacy-only")
+    env["MCP_ALLOW_LEGACY_TOKEN"] = "true"
     for name in ["MCP_OAUTH_USERNAME_FILE", "MCP_OAUTH_PASSWORD_HASH_FILE", "MCP_AUTH_TOKEN_FILE"]:
         env.pop(name, None)
     process = subprocess.Popen([sys.executable, "server.py"], env=env,
@@ -50,6 +51,9 @@ def test_real_two_listener_process(tmp_path):
                                "clientInfo": {"name": "socket-test", "version": "1"}}}
             headers = {"Accept": "application/json, text/event-stream"}
             assert client.post("http://127.0.0.1:8000/mcp", json=body, headers=headers).status_code == 200
+            assert client.get("http://127.0.0.1:8000/healthz").json() == {"status": "ok"}
+            assert client.get("http://127.0.0.1:8001/healthz").status_code == 404
+            assert subprocess.run([sys.executable, "healthcheck.py"], capture_output=True).returncode == 0
             assert client.post("http://127.0.0.1:8001/mcp", json=body, headers=headers).status_code == 401
             assert client.post("http://127.0.0.1:8001/mcp", json=body,
                                headers=dict(headers, Authorization="Bearer network-test-legacy-only")).status_code == 200
@@ -65,3 +69,5 @@ def test_real_two_listener_process(tmp_path):
             stdout, stderr = process.communicate(timeout=5)
         assert b"network-test-legacy-only" not in stdout + stderr
         assert b"network-test-password-only" not in stdout + stderr
+        check = subprocess.run([sys.executable, "healthcheck.py"], capture_output=True)
+        assert check.returncode == 1 and not check.stdout and not check.stderr

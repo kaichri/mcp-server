@@ -40,6 +40,7 @@ python -m pip install -r requirements-dev.txt
 MCP_PUBLIC_BASE_URL=https://mcp.example.com
 MCP_LAN_BIND_IP=<NAS_LAN_IP>
 MCP_OAUTH_USERNAME=owner
+MCP_ALLOW_LEGACY_TOKEN=true
 MCP_ACCESS_TOKEN_SECONDS=900
 MCP_REFRESH_TOKEN_SECONDS=2592000
 MCP_AUTH_CODE_SECONDS=120
@@ -51,7 +52,30 @@ Choose a long, private login password. Generate its Argon2id hash interactively:
 python oauth_admin.py hash-password
 ```
 
-Save the hash as the only line in `secrets/oauth-password-hash.txt`; create the directory first. The file and directory are excluded from Git and the Docker build context. Docker Compose mounts the file at `/run/secrets/oauth_password_hash`. Keep plaintext passwords and real tokens out of project files and shell commands. The container user must be able to read the secret file; set NAS permissions accordingly.
+Save the output as the only line in `secrets/oauth-password-hash.txt`. Alternatively, create and check the file directly:
+
+```bash
+python oauth_admin.py hash-password --output secrets/oauth-password-hash.txt
+python oauth_admin.py verify-password --hash-file secrets/oauth-password-hash.txt
+```
+
+Both commands prompt for the password interactively. `--output` writes exactly one hash followed by a newline, without displaying it or overwriting an existing file. `verify-password` reports only success or failure. Without `--hash-file`, it uses the configured hash secret or `secrets/oauth-password-hash.txt`.
+
+The file and directory are excluded from Git and the Docker build context. Docker Compose mounts the file as a secret at `/run/secrets/oauth_password_hash`. Keep plaintext passwords and real tokens out of project files and shell commands. Configuration accepts only a complete Argon2id hash with strong, bounded parameters; extra file contents and weak hashes prevent startup. The generator uses 64 MiB of memory, three iterations, four parallel lanes, a 16-byte salt, and a 32-byte hash.
+
+After transferring the file to the NAS, set permissions for the container user from the project directory over SSH:
+
+```bash
+sudo chown 10001:10001 secrets/oauth-password-hash.txt
+sudo chmod 600 secrets/oauth-password-hash.txt
+```
+
+Additional DSM ACLs must allow UID 10001 to read the file. File-backed Compose secrets may inherit bind-mount permissions; do not assume that `uid`, `gid`, or `mode` is applied automatically. After startup, verify readability without displaying the hash:
+
+```bash
+docker compose exec mcp-server python -c "from pathlib import Path; from oauth_config import validate_password_hash; validate_password_hash(Path('/run/secrets/oauth_password_hash').read_text().strip()); print('Secret is readable and valid')"
+docker compose exec mcp-server python oauth_admin.py verify-password
+```
 
 There is one private user. The username and password hash come from configuration or secrets; no additional user management is needed. Missing OAuth configuration prevents startup so that the external listener cannot accidentally run without protection.
 
@@ -62,6 +86,7 @@ There is one private user. The username and password hash come from configuratio
 | `MCP_OAUTH_PASSWORD_HASH_FILE` | Argon2id hash file; configured by Compose |
 | `MCP_OAUTH_PASSWORD_HASH` | Alternative to the hash file for direct startup |
 | `MCP_AUTH_TOKEN` | Existing static bearer token; retain it for existing clients |
+| `MCP_ALLOW_LEGACY_TOKEN` | `true` (default) or `false`; disables legacy access without deleting the token |
 | `MCP_AUTH_TOKEN_FILE` | Alternative secret file for direct startup |
 | `MCP_OAUTH_USERNAME_FILE` | Alternative secret file for the username |
 | `MCP_OAUTH_DATABASE` | Docker: `/data/oauth.sqlite3`; local: `data/oauth.sqlite3` |
@@ -71,7 +96,7 @@ There is one private user. The username and password hash come from configuratio
 | `MCP_REFRESH_TOKEN_SECONDS` | Absolute refresh-family lifetime; default 2592000 seconds / 30 days |
 | `MCP_AUTH_CODE_SECONDS` | One-time code lifetime; default 120 seconds |
 
-`*_FILE` takes precedence over the corresponding direct secret value. The static token has no automatic expiration; revoke it by changing or removing configuration and restarting. An empty value disables this access path.
+`*_FILE` takes precedence over the corresponding direct secret value. The static token has no automatic expiration; revoke it by changing or removing configuration and restarting. An empty token or `MCP_ALLOW_LEGACY_TOKEN=false` disables this access path. After migration, prefer OAuth and set the legacy switch to `false`. It affects only `/mcp` on the external listener, never login, token, or discovery endpoints. Port 8000 remains unauthenticated independently.
 
 Direct Python startup does **not** automatically load `.env`. PowerShell example after creating the secret file:
 
@@ -103,6 +128,13 @@ Both listeners bind to `0.0.0.0` inside the container. Do not use host networkin
 
 The named `oauth-data` volume stores SQLite, the RSA signing key, client metadata, authorization codes, refresh-token hashes, token families, and revocations. Normal restarts and rebuilds preserve these records. `docker compose down -v` deletes the volume and all OAuth connections. Protect backups of the volume and login secret; back up a live SQLite database with its backup API or after a clean shutdown. Signing keys and databases are sensitive runtime data and must not be committed.
 
+The Docker healthcheck checks LAN `/healthz` (database available) and external `/mcp` (401 with a bearer challenge) every 30 seconds. It uses no token or login and prints no sensitive data. `/healthz` exists only on port 8000; it does not bypass `/mcp` authentication. The healthcheck marks the container healthy or unhealthy; `restart: unless-stopped` alone does not restart a merely unhealthy container.
+
+```bash
+docker inspect --format '{{.State.Health.Status}}' synology-mcp
+docker compose exec mcp-server python healthcheck.py
+```
+
 ## Synology Reverse Proxy
 
 DSM 7: **Control Panel > Login Portal > Advanced > Reverse Proxy**. Configure your public hostname; `mcp.example.com` is an example:
@@ -130,6 +162,15 @@ Forward `Authorization`, `Accept`, `Content-Type`, `Mcp-Session-Id`, and `MCP-Pr
 
 Check port bindings and DSM/router rules after deployment from a separate network. Docker port publication may interact with firewall rules differently from regular host processes; retain loopback and LAN-IP bindings.
 
+Check the installed Docker Engine version on the NAS:
+
+```bash
+docker version --format '{{.Server.Version}}'
+docker port synology-mcp
+```
+
+Port 8000 must bind to your NAS LAN IP and port 8001 to `127.0.0.1`, never `0.0.0.0` or `[::]`. Container Manager can change port settings when recreating a container; check after GUI changes. With Docker Engine **before 28.0.0**, other machines on the same Layer 2 network can reach localhost-published ports in some configurations. This is a documented [Docker limitation](https://docs.docker.com/engine/network/port-publishing/), independent of OAuth. Test port 8001 from a second LAN computer; if reachable, use a supported Engine version or additional effective network/firewall rules. The port still requires authentication.
+
 ## OAuth endpoints and security behavior
 
 | Endpoint | Purpose |
@@ -150,6 +191,8 @@ Refresh tokens are issued with `offline_access` and compatible client metadata. 
 
 All seven existing tools require `mcp:read`: `current_time`, `web_search`, `web_fetch`, `finance_news_candidates`, `youtube_metadata`, `youtube_transcript`, and `youtube_comments`. Annotations are `readOnlyHint=true`, `destructiveHint=false`, and `idempotentHint=true`. `mcp:write` is reserved; there are currently no write/delete tools. A token with only `mcp:write` cannot access the read tools. `offline_access` is an authorization-server scope, not a required resource scope.
 
+External tool descriptors declare `securitySchemes=[{"type":"oauth2","scopes":["mcp:read"]}]`; LAN descriptors declare `[{"type":"noauth"}]`. Both also contain `_meta["securitySchemes"]`. Installed Python SDK 2.2.0 has no matching decorator parameter and discards unknown fields in its `Tool` model. Its public context-middleware API returns `tools/list` as a wire dictionary, allowing these extensions without SDK patches or tool-schema changes. The listener marker comes from the server-side ASGI scope, never headers. [OpenAI documents the declaration and compatibility field](https://developers.openai.com/plugins/reference).
+
 Login uses Argon2id, secure HttpOnly/SameSite cookies, CSRF binding to a five-minute single-use request, and explicit consent. There are no persistent browser logins. Global persistent rate limits allow 10 login attempts per minute, 60 authorization-page requests, and 120 token and revocation requests each. A failed login requires restarting OAuth. Limits do not rely on client-IP headers.
 
 Missing or invalid tokens receive external HTTP 401 with:
@@ -160,13 +203,19 @@ WWW-Authenticate: Bearer resource_metadata="https://mcp.example.com/.well-known/
 
 Invalid tokens add `error="invalid_token"`. Valid OAuth tokens without `mcp:read` receive 403 with `error="insufficient_scope"`. A valid configured static token can access all existing tools. Tokens in query strings are rejected and are never forwarded to Exa or YouTube.
 
+For rejected identifiable `tools/call` requests, the same HTTP 401/403 response also includes an MCP tool error (`isError=true`) with `_meta["mcp/www_authenticate"]`, including resource-metadata URL, scope, error, and description. The HTTP challenge remains authoritative for transport clients; no anonymous tool executes and no second login flow starts. JSON request reading is bounded; malformed or large requests retain the HTTP authentication error. This follows [OpenAI tool-auth documentation](https://developers.openai.com/plugins/build/auth); verify actual ChatGPT UI behavior during the NAS connection test.
+
+Login, OAuth error, and discovery responses include `no-store`, `no-cache`, `no-referrer`, `nosniff`, `X-Frame-Options: DENY`, restrictive CSP, and disabled camera/microphone/geolocation permissions. COOP is not added to avoid interfering with popup/redirect communication.
+
+SQLite uses WAL and a 5000 ms busy timeout. Code redemption, refresh rotation, and replay revocation remain atomic. Cleanup runs on new authorization requests; there are no new background services. Database, WAL, and SHM files have Linux mode 0600. There are no foreign-key relationships. New RSA keys have 3072 bits; persistent existing keys require at least 2048 bits. No JWKS endpoint is needed because the same resource server validates its issued tokens locally.
+
 Existing mcp_dart protocol-header compatibility remains for LAN and legacy Internet token clients. OAuth clients use normal MCP protocol negotiation. The listeners have separate MCP sessions.
 
 ## Connect ChatGPT
 
 Select your public MCP URL, represented here as `https://mcp.example.com/mcp`, with OAuth in ChatGPT's MCP/app dialog. Prefer CIMD; no manually entered client secret is needed. The server advertises `client_id_metadata_document_supported=true` and `token_endpoint_auth_methods_supported=["none"]`. It reads the current ChatGPT metadata document and chooses the supported intersection `none`; the singular legacy preference `private_key_jwt` does not prevent this compatible choice.
 
-This private server permits CIMD URLs only under `https://chatgpt.com/oauth/.../client.json`. Exact redirect URIs come from the official document; wildcards are not allowed. HTTPS fetching has a timeout and size limit and follows no redirects. The server provides no DCR, OIDC, or `private_key_jwt` endpoints. ChatGPT also supports DCR/static clients, but the selected CIMD configuration does not require them.
+This private server permits CIMD URLs only at `https://chatgpt.com/oauth/client.json` or `https://chatgpt.com/oauth/<callback_id>/client.json`. Allowed redirects are `https://chatgpt.com/connector_platform_oauth_redirect` and `https://chatgpt.com/connector/oauth/<callback_id>`, additionally matched **exactly** against published client metadata. No other hosts/paths, wildcards, credentials, fragments, or query strings are allowed. HTTPS fetching has a timeout, a 64-KiB size limit, exact JSON content-type validation, `trust_env=False`, and no redirect following. The server provides no DCR, OIDC, or `private_key_jwt` endpoints. ChatGPT also supports DCR/static clients, but the selected CIMD configuration does not require them.
 
 Expected flow:
 
@@ -225,13 +274,51 @@ python -m pytest -q
 
 Tests run both ASGI apps with their actual MCP lifecycle and cover the full login/token flow, legacy clients, manipulated headers, metadata, PKCE, single-use codes, JWT claims, scopes, refresh rotation/expiration, revocation, CSRF, persistence, and CIMD validation. A schema baseline from the previous server protects existing tool names and input/output schemas. Real network smoke tests check both HTTP listeners independently.
 
+Hardening tests add listener-specific security metadata under concurrent requests, MCP authentication challenges, the legacy switch, complete password hashes and admin verification, startup failure before listeners open, healthcheck, SQLite key/rate-limit persistence, and official callback formats.
+
 Administratively revoke all OAuth families:
 
 ```bash
 docker compose exec mcp-server python oauth_admin.py revoke-all
 ```
 
-This does not change the static `MCP_AUTH_TOKEN`. Revoke it by changing or removing it in the ignored `.env` and recreating the container.
+This does not change the static `MCP_AUTH_TOKEN`. Disable it with `MCP_ALLOW_LEGACY_TOKEN=false` and recreate the container; for permanent revocation also change or remove the token.
+
+## Final setup checklist
+
+### One-time setup
+
+1. Install Python dependencies, run `python oauth_admin.py hash-password`, and save only its hash to `secrets/oauth-password-hash.txt`. Alternatively use `hash-password --output secrets/oauth-password-hash.txt`. Check it with `verify-password`.
+2. Transfer the file to the NAS and set the permissions for UID 10001 described above. Keep and extend your existing ignored `.env`; replace the example values with your own deployment settings:
+
+```dotenv
+MCP_PUBLIC_BASE_URL=https://mcp.example.com
+MCP_LAN_BIND_IP=<NAS_LAN_IP>
+MCP_OAUTH_USERNAME=owner
+MCP_ALLOW_LEGACY_TOKEN=true
+```
+
+Initially retain the existing `MCP_AUTH_TOKEN`. Then run from the NAS project directory:
+
+```bash
+docker compose config --quiet
+docker compose up -d --build
+```
+
+3. Route the entire public HTTPS origin on port 443 to `http://127.0.0.1:8001` through Synology Reverse Proxy.
+4. Check port mappings, secret readability, healthcheck, and firewall. LAN remains at `http://<NAS_LAN_IP>:8000/mcp` without authentication.
+
+### After deployment
+
+```bash
+curl -i --max-time 10 'http://<NAS_LAN_IP>:8000/mcp'
+curl -i https://mcp.example.com/mcp
+curl -sS https://mcp.example.com/.well-known/oauth-protected-resource
+curl -sS https://mcp.example.com/.well-known/oauth-protected-resource/mcp
+curl -sS https://mcp.example.com/.well-known/oauth-authorization-server
+```
+
+A plain LAN GET must not return an authentication challenge but may return an MCP session/Accept transport error. For a positive functional test, use the `initialize` POST above and expect HTTP 200. An external GET without a token must return 401. All discovery documents must advertise public HTTPS URLs and resource `/mcp`. Port 8001 must be inaccessible from another LAN computer. Then complete a real ChatGPT connection, login, and tool call; disable the legacy switch afterwards if desired.
 
 ## LAN
 

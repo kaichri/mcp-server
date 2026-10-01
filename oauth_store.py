@@ -21,10 +21,15 @@ class Store:
         path = Path(filename)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.lock = threading.RLock()
+        # Restrict the DB before SQLite creates WAL/SHM files: they inherit its mode.
+        fd = os.open(filename, os.O_CREAT | os.O_RDWR, 0o600)
+        os.close(fd)
+        if os.name != "nt":
+            os.chmod(filename, 0o600)
         self.db = sqlite3.connect(filename, check_same_thread=False, isolation_level=None)
         self.db.row_factory = sqlite3.Row
-        self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA busy_timeout=5000")
+        self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS clients (
@@ -41,7 +46,10 @@ class Store:
             CREATE TABLE IF NOT EXISTS rate_limits (name TEXT PRIMARY KEY, count INTEGER, reset INTEGER);
         """)
         if os.name != "nt":
-            os.chmod(filename, 0o600)
+            for suffix in ("-wal", "-shm"):
+                sidecar = Path(str(filename) + suffix)
+                if sidecar.exists():
+                    os.chmod(sidecar, 0o600)
         with self.transaction():
             if not self.one("SELECT value FROM settings WHERE name='signing_key'"):
                 key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
@@ -50,6 +58,8 @@ class Store:
                 self.execute("INSERT INTO settings VALUES ('signing_key', ?)", (pem,))
             self.private_key = serialization.load_pem_private_key(
                 self.one("SELECT value FROM settings WHERE name='signing_key'")["value"].encode(), None)
+            if not isinstance(self.private_key, rsa.RSAPrivateKey) or self.private_key.key_size < 2048:
+                raise ValueError("Persistent OAuth signing key must be RSA with at least 2048 bits")
             self.public_key = self.private_key.public_key()
 
     @contextmanager
