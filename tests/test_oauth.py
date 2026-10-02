@@ -205,7 +205,10 @@ def test_full_oauth_flow_identical_tools_and_call(apps):
     assert [{k: v for k, v in t.items() if k not in ("_meta", "securitySchemes")} for t in lan_tools] == [
         {k: v for k, v in t.items() if k not in ("_meta", "securitySchemes")} for t in public_tools]
     expected = json.loads(__import__('pathlib').Path("tests/tool_schemas.json").read_text())
-    assert {t["name"]: {k: t.get(k) for k in ["inputSchema", "outputSchema"]} for t in lan_tools} == expected
+    actual = {t["name"]: {k: t.get(k) for k in ["inputSchema", "outputSchema"]} for t in lan_tools}
+    assert {name: actual[name] for name in expected} == expected
+    assert set(actual) - set(expected) == {"x_read_post", "x_read_thread", "x_search", "x_search_user",
+                                         "web_deep_search", "web_search_and_fetch"}
     for tool in lan_tools:
         assert tool["annotations"]["readOnlyHint"] is True
         assert tool["annotations"]["destructiveHint"] is False

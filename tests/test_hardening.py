@@ -27,7 +27,7 @@ def test_security_metadata_is_request_local(apps):
         public_future = pool.submit(tools_list, public, token)
         lan_tools, _ = lan_future.result()
         public_tools, _ = public_future.result()
-    assert len(lan_tools) == len(public_tools) == 7
+    assert len(lan_tools) == len(public_tools) == 13
     for tool in public_tools:
         assert tool["securitySchemes"] == tool["_meta"]["securitySchemes"] == [{"type": "oauth2", "scopes": ["mcp:read"]}]
     for tool in lan_tools:
@@ -239,6 +239,7 @@ def test_oauth_security_headers_and_login_ux(apps):
         assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
         assert response.headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()"
     page = responses[0].text
-    assert "ChatGPT möchte" in page and "Zugriff erlauben" in page and "Abbrechen" in page
+    assert "Synology MCP Server" in page and "Ein MCP-Client möchte" in page
+    assert "Zugriff erlauben" in page and "Abbrechen" in page
     assert "automatisch erneuern" in page and "Lesen und Abrufen" in page
     assert CLIENT not in page and "<script" not in page

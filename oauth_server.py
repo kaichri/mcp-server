@@ -356,7 +356,7 @@ class OAuthService(AuthorizationServer):
                   "offline_access": "Verbindung ohne erneute Anmeldung automatisch erneuern"}
         permissions = "".join("<li>" + escape(labels[s]) + "</li>" for s in scope.split())
         page = f'''<!doctype html><html lang="de"><meta charset="utf-8"><title>MCP Anmeldung</title>
-<h1>Privater Synology MCP-Server</h1><p>ChatGPT möchte auf deinen privaten MCP-Server zugreifen.</p>
+<h1>Synology MCP Server</h1><p>Ein MCP-Client möchte auf deinen privaten MCP-Server zugreifen.</p>
 <p>Mit deiner Anmeldung erlaubst du folgende Berechtigungen:</p><ul>{permissions}</ul>
 <form method="post" action="{escape(self.config.public_base_url)}/oauth/authorize">
 <input type="hidden" name="request_id" value="{request_id}">

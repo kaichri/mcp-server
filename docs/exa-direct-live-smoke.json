@@ -1,0 +1,260 @@
+{
+  "date": "2026-10-02T11:18:39.086857+00:00",
+  "tests": [
+    {
+      "name": "deep_search",
+      "status": "OK",
+      "seconds": 8.201,
+      "provider": "exa_direct",
+      "fallbacks": [],
+      "usage": {
+        "estimated_cost_dollars": {
+          "total": 0.012
+        },
+        "billing_exact": false
+      },
+      "requests": [
+        {
+          "endpoint": "/search",
+          "method": "POST",
+          "type": "deep",
+          "num_results": 3,
+          "http_status": 200
+        }
+      ],
+      "results": [
+        {
+          "title": "Qwen3.8-Flash-Next: A New Architecture, Towards Ultimate Cost-Efficiency - Alibaba Cloud Community",
+          "url": "https://www.alibabacloud.com/blog/qwen3-8-flash-next-a-new-architecture-towards-ultimate-cost-efficiency_603501",
+          "text_characters": 1108
+        },
+        {
+          "title": "Qwen/Qwen3.8-Flash-Next · Hugging Face",
+          "url": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+          "text_characters": 1494
+        },
+        {
+          "title": "README.md · Qwen/Qwen3.8-Flash-Next-FP8 at main",
+          "url": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8/blob/main/README.md",
+          "text_characters": 1499
+        }
+      ],
+      "output": {
+        "present": true,
+        "content_characters": 1983,
+        "grounding_entries": 1,
+        "preview": "As of October 2, 2026, the strongest recent evidence is the official Qwen model card/blog plus SemiAnalysis’s inference tracking. Qwen3.8-Flash-Next is a 176B-total-parameter, 6B-active MoE model with a 262K native context window; YaRN can extend context to 1M tokens. [1][2]\n\nOfficial capability ben"
+      }
+    },
+    {
+      "name": "auto_search",
+      "status": "OK",
+      "seconds": 1.144,
+      "provider": "exa_direct",
+      "fallbacks": [],
+      "usage": {
+        "estimated_cost_dollars": {
+          "total": 0.007,
+          "search": {
+            "neural": 0.007
+          }
+        },
+        "billing_exact": false
+      },
+      "requests": [
+        {
+          "endpoint": "/search",
+          "method": "POST",
+          "type": "auto",
+          "num_results": 1,
+          "http_status": 200
+        }
+      ],
+      "results": [
+        {
+          "title": "3.14.8 Documentation",
+          "url": "https://docs.python.org/",
+          "text_characters": 137
+        }
+      ]
+    },
+    {
+      "name": "direct_search",
+      "status": "OK",
+      "provider": "exa_direct",
+      "fallbacks": [],
+      "usage": {
+        "estimated_cost_dollars": {
+          "total": 0.007,
+          "search": {
+            "neural": 0.007
+          }
+        },
+        "billing_exact": false
+      },
+      "result_count": 3,
+      "results": [
+        {
+          "url": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+          "requested_url": null,
+          "title": "Qwen/Qwen3.8-Flash-Next - Hugging Face",
+          "text_characters": 1455,
+          "text_utf8_bytes": 1455,
+          "preview": "# Qwen3.8-Flash-Next\n...\n> For users seeking managed, scalable inference without infrastructure maintenance, the official Qwen API service is provided by Qwen Cloud.\n> \n> In particular, Qwen3.8-Flash ",
+          "error": null
+        },
+        {
+          "url": "https://github.com/qwenlm/qwen3.8-flash-next",
+          "requested_url": null,
+          "title": "QwenLM/Qwen3.8-Flash-Next",
+          "text_characters": 1367,
+          "text_utf8_bytes": 1371,
+          "preview": "# QwenLM/Qwen3.8-Flash-Next\n\nQwen3.8-Flash-Next is the foundation model developed by Qwen Team, Alibaba Group.\n...\nIn this release we are opening the weights of **Qwen3.8-Flash-Next**, a multimodal Mo",
+          "error": null
+        },
+        {
+          "url": "https://www.alibabacloud.com/blog/qwen3-8-flash-next-a-new-architecture-towards-ultimate-cost-efficiency_603501",
+          "requested_url": null,
+          "title": "Qwen3.8-Flash-Next: A New Architecture, Towards Ultimate Cost-Efficiency - Alibaba Cloud Community",
+          "text_characters": 1489,
+          "text_utf8_bytes": 1495,
+          "preview": "# Qwen3.8-Flash-Next: A New Architecture, Towards Ultimate Cost-Efficiency \n\n Alibaba Cloud Community August 27, 2026 10,763 0 \n\n In this release we are opening the weights of Qwen3.8-Flash-Next, a mu",
+          "error": null
+        }
+      ],
+      "seconds": 0.543,
+      "requests": [
+        {
+          "method": "POST",
+          "endpoint": "/search",
+          "num_results": 3,
+          "urls": null,
+          "http_status": 200
+        }
+      ]
+    },
+    {
+      "name": "single_contents",
+      "status": "OK",
+      "provider": "exa_direct",
+      "fallbacks": [],
+      "usage": {
+        "estimated_cost_dollars": {
+          "total": 0.001,
+          "contents": {
+            "text": 0.001
+          }
+        },
+        "billing_exact": false
+      },
+      "result_count": 1,
+      "results": [
+        {
+          "url": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+          "requested_url": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+          "title": "Qwen/Qwen3.8-Flash-Next · Hugging Face",
+          "text_characters": 20000,
+          "text_utf8_bytes": 20011,
+          "preview": "# Qwen3.8-Flash-Next \n\n> This repository contains model weights and configuration files for the post-trained model in the Hugging Face Transformers format. \n> \n> These artifacts are compatible with Hu",
+          "error": null,
+          "text_limit_reached": true
+        }
+      ],
+      "url_mapping_correct": true,
+      "seconds": 0.387,
+      "requests": [
+        {
+          "method": "POST",
+          "endpoint": "/contents",
+          "num_results": null,
+          "urls": [
+            "https://huggingface.co/Qwen/Qwen3.8-Flash-Next"
+          ],
+          "http_status": 200
+        }
+      ]
+    },
+    {
+      "name": "batch_contents",
+      "status": "OK",
+      "provider": "exa_direct",
+      "fallbacks": [],
+      "usage": {
+        "estimated_cost_dollars": {
+          "total": 0.002,
+          "contents": {
+            "text": 0.002
+          }
+        },
+        "billing_exact": false
+      },
+      "result_count": 2,
+      "results": [
+        {
+          "url": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+          "requested_url": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+          "title": "Qwen/Qwen3.8-Flash-Next · Hugging Face",
+          "text_characters": 20000,
+          "text_utf8_bytes": 20011,
+          "preview": "# Qwen3.8-Flash-Next \n\n> This repository contains model weights and configuration files for the post-trained model in the Hugging Face Transformers format. \n> \n> These artifacts are compatible with Hu",
+          "error": null,
+          "text_limit_reached": true
+        },
+        {
+          "url": "https://github.com/qwenlm/qwen3.8-flash-next",
+          "requested_url": "https://github.com/qwenlm/qwen3.8-flash-next",
+          "title": "QwenLM/Qwen3.8-Flash-Next",
+          "text_characters": 8430,
+          "text_utf8_bytes": 8461,
+          "preview": "# QwenLM/Qwen3.8-Flash-Next\n\nQwen3.8-Flash-Next is the foundation model developed by Qwen Team, Alibaba Group.\n\n- Stars: 369\n- Forks: 18\n- Watchers: 369\n- Open issues: 8\n- Homepage: https://qwen.ai\n- ",
+          "error": null,
+          "text_limit_reached": false
+        }
+      ],
+      "url_mapping_correct": true,
+      "seconds": 0.421,
+      "requests": [
+        {
+          "method": "POST",
+          "endpoint": "/contents",
+          "num_results": null,
+          "urls": [
+            "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+            "https://github.com/qwenlm/qwen3.8-flash-next"
+          ],
+          "http_status": 200
+        }
+      ]
+    }
+  ],
+  "retries": 0,
+  "remote_calls": 0,
+  "request_attempts_total": 6,
+  "regression": {
+    "passed": 269,
+    "compose_config": "PASS",
+    "git_diff_check": "PASS"
+  },
+  "production_code_changes": [],
+  "recommendation": "READY_TO_COMMIT",
+  "recommendation_reason": "All five live checks confirmed; exactly three additional HTTP requests; regression, Compose, diff and secret checks passed.",
+  "completion_date": "2026-10-02T11:28:03.522586+00:00",
+  "historical_attempts": [
+    {
+      "name": "direct_search",
+      "status": "UNVERIFIED",
+      "reason": "test_harness_failed_after_request_result_not_preserved",
+      "request_attempts": 1
+    }
+  ],
+  "additional_requests": 3,
+  "search_has_two_usable_urls": true,
+  "cost_summary": {
+    "additional_requests_estimated_dollars": 0.01,
+    "all_documented_successful_tests_estimated_dollars": 0.029,
+    "initial_lost_search_cost": "unknown",
+    "billing_exact": false
+  },
+  "security_check": "PASS: exact key absent outside ignored config.env in scanned source, report, log, cache files and Git diffs; dependency installations excluded.",
+  "test_script_change": "Fixed report closure scope, retain Search result in memory, checkpoint each completed call, validated offline before live use."
+}

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 import server
+from exa_provider import OBJECTIVE, MAX_TEXT
 
 
 @pytest.mark.parametrize("url", ["https://www.youtube.com/watch?v=abc123", "https://youtu.be/abc123",
@@ -22,6 +23,8 @@ def test_time_and_transcript_helpers():
 
 
 def test_web_search_and_fetch_contract(monkeypatch):
+    monkeypatch.delenv("EXA_API_KEY", raising=False)
+    monkeypatch.setenv("EXA_PROVIDER", "remote_mcp")
     calls = []
     async def fake(tool, args):
         calls.append((tool, args))
@@ -29,8 +32,8 @@ def test_web_search_and_fetch_contract(monkeypatch):
     monkeypatch.setattr(server, "call_exa", fake)
     assert asyncio.run(server.web_search("query", 99)) == "unchanged-text-output"
     assert asyncio.run(server.web_fetch("https://example.org")) == "unchanged-text-output"
-    assert calls == [("web_search_exa", {"query": "query", "numResults": 20}),
-                     ("web_fetch_exa", {"url": "https://example.org"})]
+    assert calls == [("web_search_exa", {"query": "query", "numResults": 20, "objective": OBJECTIVE}),
+                     ("web_fetch_exa", {"urls": ["https://example.org"], "maxCharacters": MAX_TEXT})]
 
 
 def test_youtube_metadata_contract(monkeypatch):

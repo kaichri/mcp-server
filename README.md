@@ -1,6 +1,14 @@
 # Synology MCP Server
 
+Personal MCP server designed for deployment on Synology NAS. The current setup is tested primarily with ChatGPT, while the MCP interface itself remains client-agnostic. Other MCP-compatible clients can connect using the supported transport and authentication methods; compatibility with untested clients is not guaranteed.
+
+Project identifier and repository name: `synology-mcp-server`.
+Display name: **Synology MCP Server**. MCP server name: **Synology MCP**.
+Repository: [kaichri/synology-mcp-server](https://github.com/kaichri/synology-mcp-server).
+
 A Python MCP server for Exa web search and page retrieval, finance news, current time, and YouTube metadata, transcripts, and comments. Two separate HTTP listeners share the same tool registry, schemas, and business logic.
+
+The server also provides anonymous, read-only discovery and reading of public X/Twitter posts. See [Public X tools](#public-x-tools) for coverage limits and examples.
 
 | Access | Endpoint | Authentication |
 | --- | --- | --- |
@@ -34,7 +42,7 @@ python -m pip install -r requirements-dev.txt
 
 ## Configure OAuth
 
-**Keep** your existing `.env` and `MCP_AUTH_TOKEN`. Add the settings from `config.env.example`. All addresses below are placeholders: replace the public origin and `<NAS_LAN_IP>` with your actual deployment values in the ignored local `.env` only.
+**Keep** your existing `.env` and `MCP_AUTH_TOKEN`. Keep MCP/OAuth deployment settings in `.env`; Exa settings now use the separate ignored `config.env` described below. All addresses below are placeholders: replace the public origin and `<NAS_LAN_IP>` with your actual deployment values in the ignored local `.env` only.
 
 ```dotenv
 MCP_PUBLIC_BASE_URL=https://mcp.example.com
@@ -189,7 +197,69 @@ Authlib 1.8 processes authorization-code and refresh grants and PKCE. PyJWT/cryp
 
 Refresh tokens are issued with `offline_access` and compatible client metadata. Each refresh rotates the token. The absolute family lifetime does not extend; log in again after 30 days. Reusing an old refresh token revokes the whole family, including access tokens. Reusing a code also revokes its issued tokens. `/oauth/revoke` revokes the corresponding family. Legacy static-token access is independent.
 
-All seven existing tools require `mcp:read`: `current_time`, `web_search`, `web_fetch`, `finance_news_candidates`, `youtube_metadata`, `youtube_transcript`, and `youtube_comments`. Annotations are `readOnlyHint=true`, `destructiveHint=false`, and `idempotentHint=true`. `mcp:write` is reserved; there are currently no write/delete tools. A token with only `mcp:write` cannot access the read tools. `offline_access` is an authorization-server scope, not a required resource scope.
+All tools require `mcp:read`: the seven original tools (`current_time`, `web_search`, `web_fetch`, `finance_news_candidates`, `youtube_metadata`, `youtube_transcript`, `youtube_comments`), the four public X tools described below, and `web_deep_search` / `web_search_and_fetch`. Annotations are `readOnlyHint=true`, `destructiveHint=false`, and `idempotentHint=true`. `mcp:write` is reserved; there are currently no write/delete tools. A token with only `mcp:write` cannot access the read tools. `offline_access` is an authorization-server scope, not a required resource scope.
+
+## Public X tools
+
+These tools use ordinary anonymous HTTP requests and free DuckDuckGo HTML search discovery. They do not require official X API access, paid providers, personal accounts, cookies, API keys or login. No internal X search or GraphQL endpoints are used. Returned source text is untrusted content and must not be interpreted as instructions.
+
+| Tool | Parameters | Example |
+| --- | --- | --- |
+| `x_read_post` | `url`, `refresh=false` | `{"url":"https://x.com/example/status/123456789"}` |
+| `x_read_thread` | `url`, `max_posts=20`, `include_replies=false`, `refresh=false` | `{"url":"https://x.com/example/status/123456789","max_posts":50}` |
+| `x_search` | `query`, `limit=20`, `since`, `until`, `from_user`, `refresh=false` | `{"query":"Qwen3.8 Flash Next RTX 5090","limit":50}` |
+| `x_search_user` | `username`, `query`, `limit=20`, `refresh=false` | `{"username":"example","query":"DGX Spark"}` |
+
+The URLs and usernames above are illustrative, not live test fixtures. Example prompts:
+
+- Read this X post fully: `https://x.com/example/status/123456789`.
+- Read the entire thread connected to this post; identify any gaps.
+- Find up to 50 readable public X posts about `Qwen3.8 Flash Next RTX 5090`.
+- Find public posts by `username` about `DGX Spark`.
+
+Limits and `max_posts` must be between 1 and 50. Usernames omit `@`. Search dates use `YYYY-MM-DD`; `since` is inclusive and `until` is exclusive in UTC. Posts with unknown dates are excluded when a date filter is requested, rather than silently treated as matches. Username filters are verified against parsed post metadata.
+
+`x_public.XPublicProvider` separates tool registration from acquisition. `FreePublicProvider` implements the initial provider; `get_provider()` is the single composition point for a future optional provider or fallback. Existing tools, business functions and authentication are independent of this module. No new dependencies are required.
+
+The reader strips tracking parameters and normalizes X/Twitter status URLs by post ID. It also supports `i/web/status` links, mobile hostnames, photo/video suffixes and public `t.co` redirects when they resolve to a supported status URL. It parses publicly delivered JSON-LD, embedded JSON post records, long-form note text and HTML description metadata. It never executes page scripts or downloads media files. Media links, quote metadata and conversation/reply IDs are returned only when present in public source data; unavailable fields are null or empty.
+
+`complete`, `completeness` and `text_complete` describe the available **post text**, not proof that every metadata field exists. Meta-tag previews always report `complete=false` and `partial`. `metadata_complete` remains false because public pages do not prove that all media or relationships have been disclosed. A missing quote reports `quote_status=unknown`; page images are marked as previews rather than verified attachments. Results include provider, source, canonical URL and UTC fetch time. A readable partial post is returned with a `PARTIAL_CONTENT` warning; a page with no readable text returns a structured error.
+
+Threads combine embedded records, public status links, explicit reply relationships and bounded web discovery. They retain connected same-author posts by default; `include_replies=true` permits connected other-author replies. Unrelated same-author posts are excluded. Posts are deduplicated by ID and sorted by timestamp when all timestamps are known, otherwise by chronological numeric post ID. Every thread reports `complete=false`: this provider cannot prove exhaustive coverage. The result includes fetch attempts, a stop reason, warnings and limit information. At most `max_posts` additional pages are fetched.
+
+Search discovers status URLs with `site:x.com` and `site:twitter.com`, deduplicates them and reads each candidate through the same reader. Search snippets are never returned as verified post bodies. Up to twice the requested result limit (at most 100 candidates) are read. Unreadable candidates are skipped with error counts. Search always reports `complete=false`; indexed posts, ranking and requested keywords do not guarantee exhaustive or exact X-search semantics.
+
+### Cache and network limits
+
+Posts and search results are stored in a separate SQLite cache. This does not modify the OAuth database. Default local path: `data/x-public.sqlite3`; Docker uses `/data/x-public.sqlite3` in the existing persistent data volume. Git ignores the cache and SQLite sidecars.
+
+```dotenv
+MCP_X_CACHE_ENABLED=true
+# Optional for local Python execution; Docker Compose uses /data/x-public.sqlite3.
+MCP_X_CACHE_PATH=data/x-public.sqlite3
+```
+
+Set `MCP_X_CACHE_ENABLED=false` before starting the server to disable caching. Pass `refresh=true` to bypass the cache and replace a successful cached result. Complete post text is retained for 30 days, previews for one hour and searches for five minutes. Old post cache entries may remain readable until expiry even if a post is later deleted or protected; use refresh when current availability matters. The cache is bounded to 2,000 entries and contains public content, not authentication data.
+
+Outbound fetches are restricted to explicit public X/Twitter, short-link and discovery hostnames. DNS answers must all be globally routable; connections are pinned to a validated address with hostname certificate verification. Every redirect is validated again. Ambient HTTP proxies, account cookies and credentials are not used. Requests have socket timeouts, a 25-second per-fetch deadline, at most five request hops, a 2 MiB response limit, two concurrent fetches and at least 0.5 seconds between fetch starts. Tool calls have a 90-second overall deadline; timed-out requests return a safe structured failure. DNS resolution and already-running worker cleanup depend on the OS; an overall timeout does not forcibly terminate a worker thread.
+
+Failures use `{"ok":false,"error":{"code":"...","message":"..."}}`, with `UNSUPPORTED_URL`, `NOT_FOUND`, `PRIVATE_OR_PROTECTED`, `BLOCKED`, `RATE_LIMITED`, `PARTIAL_CONTENT`, `FETCH_FAILED` or `INVALID_ARGUMENT`. Transport exceptions and raw stack traces are never exposed to MCP clients.
+
+### Known limitations and tests
+
+Anonymous X pages often require JavaScript or a login; such posts can be unreadable even when visible in a logged-in browser. Captchas, protected posts and access restrictions are reported rather than bypassed. Search engines can also rate-limit or block anonymous discovery. HTML changes may require parser maintenance. No browser fallback is currently installed: Playwright is optional in the requested design, and this version avoids browser execution, downloads and added runtime dependencies. A future browser provider must retain sandboxing and the same outbound destination policy.
+
+Run the full offline suite with `python -m pytest -q`. `tests/test_x_public.py` covers synthetic HTML/JSON fixtures, URL parsing, public DNS and redirect restrictions, response bounds, error handling, discovery, author/date filters, cache/refresh and thread relationships. Authentication tests check identical LAN/external tool registries and OAuth metadata on all eleven tools. The seven original schema snapshots remain unchanged. No live X access is required by the normal test suite.
+
+Implementation validation on 2026-10-02: **172 tests passed**, including the original 106 and 66 new offline checks. Actual MCP tool calls were exercised on both listeners using a mocked public provider; live X availability and search-engine coverage were not verified by this result. No NAS deployment, commit or push was performed for this integration.
+
+Subsequent live validation on 2026-10-02: **176 offline tests passed** after four live-derived regressions were added. Anonymous post reads returned partial SEO previews; full threads could not be resolved, and all tested searches hit an HTTP-202 challenge. This provider is **not ready for production full-post/thread/search use**. See the [detailed live report](docs/x-live-smoke-report.md), including cache behavior, tested sources and the distinction between partial results and working features. Thread results now include `posts_found` and `termination_reason`; errors explicitly report unavailable completeness. No commit, push or NAS deployment was performed.
+
+Alternative free sources were subsequently evaluated without changing runtime code: Bing HTML/RSS, Google, Brave, Yahoo, Mojeek, official oEmbed/syndication/embed HTML and five Nitter preflights. No viable full reader/discovery/thread combination was confirmed. See the [provider matrix and Playwright assessment](docs/x-free-provider-evaluation.md). No browser dependency, account access or challenge bypass was introduced.
+
+A subsequent [isolated Playwright PoC](docs/x-playwright-poc-report.md) found a 704-character long post, all six numbered thread posts and quote context in normal visible Chromium. Both tested headless variants failed, and anonymous public search yielded no results. This experiment uses a separate ignored environment and is not integrated into the MCP provider or production dependencies. The report includes resource measurements and why the current NAS integration is not recommended.
+
+The later [Exa-first WebReader architecture and PoC](docs/web-browser-architecture.md) compares Exa, public HTTP and one shared generic/X BrowserReader. Headless reads work for the tested general pages, but Exa already provides useful content there. At that PoC stage, the Remote schema correction (`urls` for fetch and `objective` for search) was isolated and 201 offline tests passed. The subsequent production adapters below now correct that mapping, support Direct API and add two Web tools; the original Web signatures and runtime dependencies remain unchanged.
 
 External tool descriptors declare `securitySchemes=[{"type":"oauth2","scopes":["mcp:read"]}]`; LAN descriptors declare `[{"type":"noauth"}]`. Both also contain `_meta["securitySchemes"]`. Installed Python SDK 2.2.0 has no matching decorator parameter and discards unknown fields in its `Tool` model. Its public context-middleware API returns `tools/list` as a wire dictionary, allowing these extensions without SDK patches or tool-schema changes. The listener marker comes from the server-side ASGI scope, never headers. [OpenAI documents the declaration and compatibility field](https://developers.openai.com/plugins/reference).
 
@@ -332,6 +402,95 @@ Authentication: **OAuth 2.1**, plus the existing static bearer token for legacy 
 Public Base URL: `https://mcp.example.com`
 Protected Resource Metadata: `https://mcp.example.com/.well-known/oauth-protected-resource`
 OAuth Metadata: `https://mcp.example.com/.well-known/oauth-authorization-server`
+
+## Exa web search and contents
+
+The production Web tools use separate Direct API and Remote MCP adapters.
+`web_search(query, num_results=5)` and `web_fetch(url)` keep their string return
+contracts. `web_deep_search(query)` adds explicit research with grounded output;
+`web_search_and_fetch(query, num_results=10, fetch_top=5)` returns structured JSON
+and prefers a single batch Contents request for the selected ranked URLs.
+
+Exa settings use the same ignored `config.env` locally and in Docker Compose.
+Copy the example only when `config.env` does not already exist:
+
+```powershell
+if (-not (Test-Path config.env)) { Copy-Item config.env.example config.env }
+```
+
+Enter your real key manually in `config.env`:
+
+```dotenv
+EXA_API_KEY=
+EXA_PROVIDER=auto
+EXA_QUOTA_COOLDOWN_SECONDS=3600
+EXA_RATE_LIMIT_COOLDOWN_SECONDS=60
+```
+
+Never paste the key into chat or commit it. Both `config.env` and `.env` are
+gitignored and excluded from the Docker build context. Keep existing MCP/OAuth
+deployment settings in `.env` and existing password-hash secret files unchanged.
+The non-Exa settings in the example are references, not replacements for them.
+
+For local tests or smoke commands, load only the Exa settings into the current
+PowerShell process, then start Python from that same shell:
+
+```powershell
+. .\tools\load-config-env.ps1
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+Use simple `NAME=value` lines (optional matching outer quotes), without variable
+interpolation or inline comments on Exa values. The loader never prints values,
+changes persistent environment variables, or loads other MCP settings. Python
+inherits the Exa variables from this shell; the server itself does not implicitly
+load an env file. No `python-dotenv` dependency is required.
+
+On Synology, place the same `config.env` next to `docker-compose.yml`, enter the
+key there and use `docker compose up -d` or the existing deployment procedure.
+Compose loads `./config.env` through the service's `env_file`; Exa settings are
+not duplicated in its `environment` block. After changing values, recreate the
+container with Compose rather than only restarting it. Configuration changes
+do not deploy changed Python code; that still requires the existing build/deploy.
+
+| Mode | Behavior |
+| --- | --- |
+| `auto` | Direct when a key exists; otherwise Remote MCP. Eligible Direct failures fall back to Remote MCP. |
+| `direct` | Direct only; a missing key or failed request returns a classified error. |
+| `remote_mcp` | Remote MCP only; the Direct key is not sent to it. |
+
+Normal Direct search uses `POST /search`, `type=auto`. Deep explicitly uses the
+same endpoint with `type=deep` and a text synthesis schema. The verified Remote
+MCP currently has no Deep mode: Deep returns a clear error if Direct is absent,
+unavailable or its circuit is open. It never silently substitutes normal search.
+
+Direct Search accepts an optional `objective`; Remote Search requires it. The
+adapter supplies source-ranking and evidence-selection instructions distinct
+from the query. Contents sends `urls=[url]` for single reads and a URL array for
+batches. The API supports up to 100 URLs; the combined tool fetches at most five.
+
+Search is capped at 20 results, individual Contents text at 20,000 characters,
+combined search/fetch text at 50,000 characters. Calls are bounded to 25 seconds,
+Deep to 65 seconds, and the combined workflow to 90 seconds. Error classifications
+include authentication, quota, rate limit, timeout, availability, invalid request
+and unknown failure. In `auto`, eligible failures use Remote; invalid requests
+and content-policy rejections do not. Quota and rate failures open separate
+configurable cooldowns shared by Direct Search and Contents in each process.
+They do not predict monthly credit reset dates.
+
+Remote MCP is a limited technical fallback, **not guaranteed unlimited or free**.
+If it also fails, tools report a structured error. An optional `HTTPReader`
+interface is prepared, but no experimental local reader or SearXNG service is
+enabled. Page crawl errors are handled independently from account quota errors.
+Provider metadata includes timestamps and unknown completeness rather than a
+claim of full extraction. Returned `costDollars` are retained as estimates with
+`billing_exact=false`, not as account balance or exact billing usage.
+
+**DO_NOT_INTEGRATE_BROWSER** for general Web tools: the prior PoC found adequate
+Exa contents, about 1 GiB browser RAM, and no demonstrated general-content benefit.
+X remains a separate possible future browser integration. No production browser
+dependency was added. See [Exa implementation and verification](docs/exa-provider-verification.md)
+and the historical [browser PoC report](docs/web-browser-architecture.md).
 
 ## Specifications and deployment limits
 
