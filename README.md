@@ -49,8 +49,8 @@ MCP_PUBLIC_BASE_URL=https://mcp.example.com
 MCP_LAN_BIND_IP=<NAS_LAN_IP>
 MCP_OAUTH_USERNAME=owner
 MCP_ALLOW_LEGACY_TOKEN=true
-MCP_ACCESS_TOKEN_SECONDS=900
-MCP_REFRESH_TOKEN_SECONDS=2592000
+MCP_ACCESS_TOKEN_SECONDS=3600
+MCP_REFRESH_TOKEN_SECONDS=63072000
 MCP_AUTH_CODE_SECONDS=120
 ```
 
@@ -100,8 +100,8 @@ There is one private user. The username and password hash come from configuratio
 | `MCP_OAUTH_DATABASE` | Docker: `/data/oauth.sqlite3`; local: `data/oauth.sqlite3` |
 | `MCP_LAN_BIND_IP` | Compose bind IP for port 8000; set your NAS LAN IP (generic default `192.168.1.50`) |
 | `MCP_LAN_HOST` | Allowed LAN host for direct startup; set your NAS LAN IP (generic default `192.168.1.50`) |
-| `MCP_ACCESS_TOKEN_SECONDS` | Access-token lifetime; default 900 seconds / 15 minutes |
-| `MCP_REFRESH_TOKEN_SECONDS` | Absolute refresh-family lifetime; default 2592000 seconds / 30 days |
+| `MCP_ACCESS_TOKEN_SECONDS` | Access-token lifetime; default 3600 seconds / 1 hour |
+| `MCP_REFRESH_TOKEN_SECONDS` | Absolute refresh-family lifetime; default 63072000 seconds / 730 days |
 | `MCP_AUTH_CODE_SECONDS` | One-time code lifetime; default 120 seconds |
 
 `*_FILE` takes precedence over the corresponding direct secret value. The static token has no automatic expiration; revoke it by changing or removing configuration and restarting. An empty token or `MCP_ALLOW_LEGACY_TOKEN=false` disables this access path. After migration, prefer OAuth and set the legacy switch to `false`. It affects only `/mcp` on the external listener, never login, token, or discovery endpoints. Port 8000 remains unauthenticated independently.
@@ -195,7 +195,7 @@ Example issuer: `https://mcp.example.com`. The resource and JWT audience consist
 
 Authlib 1.8 processes authorization-code and refresh grants and PKCE. PyJWT/cryptography sign access tokens with RS256 and verify signature, issuer, audience, and expiration; database checks also enforce issuance, revocation, and stored permissions. The persistent RSA key is generated on first startup. Opaque refresh tokens and codes are stored only as SHA-256 hashes. Authorization codes are short-lived and single-use; SQLite serializes concurrent token transactions.
 
-Refresh tokens are issued with `offline_access` and compatible client metadata. Each refresh rotates the token. The absolute family lifetime does not extend; log in again after 30 days. Reusing an old refresh token revokes the whole family, including access tokens. Reusing a code also revokes its issued tokens. `/oauth/revoke` revokes the corresponding family. Legacy static-token access is independent.
+Refresh tokens are issued with `offline_access`. Access tokens expire after one hour; a client using refresh tokens, including the tested ChatGPT flow, can renew them in the background. Each refresh rotates the token. The absolute family lifetime is 730 days and does not extend on refresh. A refresh may omit `resource`; the stored binding is retained. An explicitly supplied resource must match exactly, and scopes and audience cannot expand. Valid stored refresh tokens remain usable when the trusted ChatGPT metadata omits `refresh_token` from `grant_types`; no other grants are supported. Manual login should normally be needed only after family expiry, revocation, replay detection, data loss or an OAuth/client error. This depends on the client continuing to refresh; the server cannot guarantee client behavior. Existing families keep their stored expiry: after deployment, reconnect once to obtain a new 730-day family. Existing `.env` overrides remain effective and must be reviewed manually; they are never overwritten automatically. Reusing an old refresh token revokes the whole family, including access tokens. Reusing a code also revokes its issued tokens. `/oauth/revoke` revokes the corresponding family. Legacy static-token access is independent.
 
 All tools require `mcp:read`: the seven original tools (`current_time`, `web_search`, `web_fetch`, `finance_news_candidates`, `youtube_metadata`, `youtube_transcript`, `youtube_comments`), the four public X tools described below, and `web_deep_search` / `web_search_and_fetch`. Annotations are `readOnlyHint=true`, `destructiveHint=false`, and `idempotentHint=true`. `mcp:write` is reserved; there are currently no write/delete tools. A token with only `mcp:write` cannot access the read tools. `offline_access` is an authorization-server scope, not a required resource scope.
 

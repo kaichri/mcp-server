@@ -47,8 +47,8 @@ class OAuthConfig:
     username: str
     password_hash: str
     database: str = "data/oauth.sqlite3"
-    access_seconds: int = 900
-    refresh_seconds: int = 2592000
+    access_seconds: int = 3600
+    refresh_seconds: int = 63072000
     code_seconds: int = 120
     lan_host: str = "192.168.1.50"
     legacy_token: str = ""
@@ -75,7 +75,7 @@ class OAuthConfig:
         validate_password_hash(self.password_hash)
         if not self.database or self.database == ":memory:" or self.database.startswith("file:"):
             raise ValueError("MCP_OAUTH_DATABASE must be a persistent SQLite file")
-        if not (60 <= self.access_seconds <= 3600 and 60 <= self.refresh_seconds <= 7776000
+        if not (60 <= self.access_seconds <= 3600 and 60 <= self.refresh_seconds <= 63072000
                 and 30 <= self.code_seconds <= 300):
             raise ValueError("Invalid OAuth token lifetime")
 
@@ -90,8 +90,8 @@ class OAuthConfig:
             username=secret("MCP_OAUTH_USERNAME"),
             password_hash=secret("MCP_OAUTH_PASSWORD_HASH"),
             database=os.environ.get("MCP_OAUTH_DATABASE", "data/oauth.sqlite3"),
-            access_seconds=int(os.environ.get("MCP_ACCESS_TOKEN_SECONDS", "900")),
-            refresh_seconds=int(os.environ.get("MCP_REFRESH_TOKEN_SECONDS", "2592000")),
+            access_seconds=int(os.environ.get("MCP_ACCESS_TOKEN_SECONDS", "3600")),
+            refresh_seconds=int(os.environ.get("MCP_REFRESH_TOKEN_SECONDS", "63072000")),
             code_seconds=int(os.environ.get("MCP_AUTH_CODE_SECONDS", "120")),
             lan_host=os.environ.get("MCP_LAN_HOST", "192.168.1.50"),
             legacy_token=secret("MCP_AUTH_TOKEN"),

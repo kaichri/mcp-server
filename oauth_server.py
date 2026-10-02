@@ -75,7 +75,10 @@ class Client(ClientMixin):
         return response_type == "code"
 
     def check_grant_type(self, grant_type):
-        return grant_type in self.metadata.get("grant_types", ["authorization_code"])
+        # A refresh still requires an issued, client-bound, unexpired credential.
+        # Trusted CIMD documents may omit refresh_token despite using refresh.
+        return (grant_type in {"authorization_code", "refresh_token"}
+                and "authorization_code" in self.metadata.get("grant_types", ["authorization_code"]))
 
 
 class Credential(SimpleNamespace):
@@ -185,7 +188,9 @@ class RefreshGrant(RefreshTokenGrant):
             return None
         if row["revoked"]:
             return None
-        self.server.validate_resource(self.request.payload.data)
+        data = self.request.payload.data
+        if "resource" in data and data["resource"] != row["resource"]:
+            raise InvalidRequestError("resource must match the stored MCP endpoint")
         return Credential(**dict(row))
 
     def authenticate_user(self, token):
@@ -240,6 +245,7 @@ class OAuthService(AuthorizationServer):
             grants = metadata.get("grant_types", ["authorization_code"])
             response_types = metadata.get("response_types", ["code"])
             if (not isinstance(grants, list) or "authorization_code" not in grants
+                    or any(grant not in {"authorization_code", "refresh_token"} for grant in grants)
                     or not isinstance(response_types, list) or "code" not in response_types):
                 return None
             self.store.cache_client(client_id, metadata)

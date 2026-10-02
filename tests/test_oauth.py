@@ -506,3 +506,108 @@ def test_cimd_no_redirects_or_error_fallback(config, monkeypatch, status):
     assert oauth.query_client(CLIENT) is None
     assert calls == [CLIENT]
     oauth.store.close()
+
+
+def test_two_year_defaults_and_env(config, monkeypatch):
+    assert config.access_seconds == 3600
+    assert config.refresh_seconds == 730 * 24 * 3600
+    monkeypatch.setenv("MCP_PUBLIC_BASE_URL", BASE)
+    monkeypatch.setenv("MCP_OAUTH_USERNAME", config.username)
+    monkeypatch.setenv("MCP_OAUTH_PASSWORD_HASH", config.password_hash)
+    for name in ("MCP_ACCESS_TOKEN_SECONDS", "MCP_REFRESH_TOKEN_SECONDS",
+                 "MCP_OAUTH_USERNAME_FILE", "MCP_OAUTH_PASSWORD_HASH_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    loaded = OAuthConfig.from_env()
+    assert loaded.access_seconds == 3600
+    assert loaded.refresh_seconds == 63072000
+    with pytest.raises(ValueError):
+        replace(config, refresh_seconds=63072001)
+
+
+def advance_oauth_clock(monkeypatch, timestamp):
+    from datetime import datetime, timezone
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromtimestamp(timestamp, tz or timezone.utc)
+    monkeypatch.setattr("oauth_server.time.time", lambda: timestamp)
+    monkeypatch.setattr("jwt.api_jwt.datetime", Clock)
+
+
+@pytest.mark.parametrize("resource", [None, BASE + "/mcp"])
+def test_refresh_after_access_expiry_preserves_binding_and_deadline(apps, monkeypatch, resource):
+    _, public, oauth = apps
+    old = tokens(public)
+    row = oauth.store.one("SELECT * FROM tokens WHERE refresh_hash=?", (digest(old["refresh_token"]),))
+    assert old["expires_in"] == 3600
+    assert row["refresh_expires"] - (row["expires"] - 3600) == 63072000
+    advance_oauth_clock(monkeypatch, row["expires"] + 1)
+    assert initialize(public, old["access_token"]).status_code == 401
+    form = {"grant_type": "refresh_token", "client_id": CLIENT, "refresh_token": old["refresh_token"]}
+    if resource is not None:
+        form["resource"] = resource
+    response = public.post("/oauth/token", data=form)
+    assert response.status_code == 200, response.text
+    new = response.json()
+    assert new["access_token"] != old["access_token"]
+    assert new["refresh_token"] != old["refresh_token"]
+    assert new["expires_in"] == 3600
+    assert initialize(public, new["access_token"]).status_code == 200
+    rotated = oauth.store.one("SELECT * FROM tokens WHERE refresh_hash=?", (digest(new["refresh_token"]),))
+    assert rotated["family"] == row["family"]
+    assert rotated["refresh_expires"] == row["refresh_expires"]
+    assert rotated["resource"] == row["resource"] == BASE + "/mcp"
+    assert rotated["scope"] == row["scope"]
+    assert not rotated["revoked"]
+    assert oauth.store.one("SELECT refresh_used FROM tokens WHERE jti=?", (row["jti"],))[0] == 1
+    claims = oauth.verify_access(new["access_token"])
+    assert claims["aud"] == row["resource"]
+    assert claims["exp"] - claims["iat"] == 3600
+    assert refresh(public, old["refresh_token"]).status_code == 400
+    assert initialize(public, new["access_token"]).status_code == 401
+    assert refresh(public, new["refresh_token"]).status_code == 400
+
+
+@pytest.mark.parametrize("seconds_before_expiry,expected", [(1, 200), (0, 400), (-1, 400)])
+def test_absolute_family_expiry_730_days(apps, monkeypatch, seconds_before_expiry, expected):
+    _, public, oauth = apps
+    old = tokens(public)
+    row = oauth.store.one("SELECT * FROM tokens WHERE refresh_hash=?", (digest(old["refresh_token"]),))
+    advance_oauth_clock(monkeypatch, row["refresh_expires"] - seconds_before_expiry)
+    response = refresh(public, old["refresh_token"])
+    assert response.status_code == expected
+    if expected == 200:
+        new = response.json()
+        advance_oauth_clock(monkeypatch, row["refresh_expires"])
+        assert refresh(public, new["refresh_token"]).status_code == 400
+
+
+@pytest.mark.parametrize("metadata", [dict(META, grant_types=["authorization_code"]),
+                                     {k: v for k, v in META.items() if k != "grant_types"}])
+def test_refresh_with_cimd_omitting_refresh_grant(apps, metadata):
+    _, public, oauth = apps
+    oauth.store.cache_client(CLIENT, metadata)
+    old = tokens(public)
+    assert refresh(public, old["refresh_token"]).status_code == 200
+    assert refresh(public, "never-issued").status_code == 400
+    for grant in ("password", "client_credentials", "implicit"):
+        assert public.post("/oauth/token", data={"client_id": CLIENT, "grant_type": grant}).status_code == 400
+
+
+@pytest.mark.parametrize("changes", [{"resource": ""}, {"resource": BASE + "/other"},
+                                      {"scope": "mcp:read mcp:write offline_access"}])
+def test_invalid_refresh_does_not_consume_valid_credential(apps, changes):
+    _, public, _ = apps
+    old = tokens(public)
+    assert refresh(public, old["refresh_token"], **changes).status_code == 400
+    assert refresh(public, old["refresh_token"]).status_code == 200
+
+
+def test_existing_family_deadline_is_not_extended(apps):
+    _, public, oauth = apps
+    old = tokens(public)
+    deadline = int(time.time()) + 2592000
+    oauth.store.execute("UPDATE tokens SET refresh_expires=?", (deadline,))
+    new = refresh(public, old["refresh_token"]).json()
+    row = oauth.store.one("SELECT * FROM tokens WHERE refresh_hash=?", (digest(new["refresh_token"]),))
+    assert row["refresh_expires"] == deadline
