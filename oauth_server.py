@@ -360,7 +360,8 @@ class OAuthService(AuthorizationServer):
         labels = {"mcp:read": "MCP-Tools zum Lesen und Abrufen verwenden",
                   "mcp:write": "Schreibzugriff (derzeit keine Schreibtools vorhanden)",
                   "offline_access": "Verbindung ohne erneute Anmeldung automatisch erneuern"}
-        permissions = "".join("<li>" + escape(labels[s]) + "</li>" for s in scope.split())
+        permissions = "".join("<li>" + escape(labels[s]) + "</li>" for s in scope.split()
+                              if s != "offline_access")
         page = f'''<!doctype html><html lang="de"><meta charset="utf-8"><title>MCP Anmeldung</title>
 <h1>Synology MCP Server</h1><p>Ein MCP-Client möchte auf deinen privaten MCP-Server zugreifen.</p>
 <p>Mit deiner Anmeldung erlaubst du folgende Berechtigungen:</p><ul>{permissions}</ul>
@@ -369,6 +370,9 @@ class OAuthService(AuthorizationServer):
 <input type="hidden" name="csrf" value="{csrf}">
 <label>Benutzername <input name="username" autocomplete="username" required maxlength="200"></label>
 <label>Passwort <input type="password" name="password" autocomplete="current-password" required maxlength="1024"></label>
+<label><input type="checkbox" name="offline_access" value="1" checked>
+Verbindung ohne erneute Anmeldung automatisch erneuern</label>
+<p>Erlaubt die automatische Erneuerung der Verbindung über ein rotierendes Refresh-Token.</p>
 <button name="decision" value="allow">Zugriff erlauben</button>
 <button name="decision" value="deny" formnovalidate>Abbrechen</button></form></html>'''
         # Form POSTs need the real Origin for CSRF validation. Never disclose
@@ -420,7 +424,23 @@ class OAuthService(AuthorizationServer):
                     return self.error("access_denied", 403)
                 user = self.config.username
             try:
+                # Revalidate the stored original request before applying consent.
+                # POST fields cannot replace resource scopes or protocol bindings.
                 grant = self.get_consent_grant(req)
+                if user is not None:
+                    if form.get("offline_access") not in (None, "1"):
+                        raise InvalidRequestError("Invalid offline access consent")
+                    scopes = list(dict.fromkeys((req.scope or "mcp:read").split()))
+                    scopes = [scope for scope in scopes if scope != "offline_access"]
+                    if form.get("offline_access") == "1":
+                        scopes.append("offline_access")
+                    if not scopes:
+                        raise InvalidScopeError("At least one scope must be approved")
+                    pairs = [(key, value) for key, value in json.loads(pending["params"])
+                             if key != "scope"]
+                    pairs.append(("scope", " ".join(scopes)))
+                    req = self.oauth_request("GET", "/oauth/authorize", pairs)
+                    grant = self.get_consent_grant(req)
                 response = self.create_authorization_response(req, grant_user=user, grant=grant)
             except OAuth2Error as error:
                 response = self.handle_error_response(req, error)

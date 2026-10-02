@@ -61,6 +61,8 @@ def authorize(public, **changes):
     assert response.status_code == 200, response.text
     fields = dict(re.findall(r'name="(request_id|csrf)" value="([^"]+)"', response.text))
     fields.update(username="owner", password=PASSWORD, decision="allow")
+    if "offline_access" in auth_params(**changes)["scope"].split():
+        fields["offline_access"] = "1"
     response = public.post("/oauth/authorize", data=fields, headers={"Origin": BASE}, follow_redirects=False)
     assert response.status_code == 302, response.text
     query = parse_qs(urlsplit(response.headers["location"]).query)
@@ -611,3 +613,91 @@ def test_existing_family_deadline_is_not_extended(apps):
     new = refresh(public, old["refresh_token"]).json()
     row = oauth.store.one("SELECT * FROM tokens WHERE refresh_hash=?", (digest(new["refresh_token"]),))
     assert row["refresh_expires"] == deadline
+
+
+@pytest.mark.parametrize("requested,checked,expected", [
+    ("mcp:read", True, "mcp:read offline_access"),
+    ("mcp:read", False, "mcp:read"),
+    ("mcp:read offline_access", True, "mcp:read offline_access"),
+    ("mcp:read offline_access", False, "mcp:read"),
+    ("mcp:read mcp:write", True, "mcp:read mcp:write offline_access"),
+    ("mcp:read mcp:write offline_access", False, "mcp:read mcp:write"),
+])
+def test_offline_checkbox_final_scope_and_binding(apps, requested, checked, expected):
+    _, public, oauth = apps
+    response = public.get("/oauth/authorize", params=auth_params(scope=requested))
+    assert response.status_code == 200
+    assert 'type="checkbox" name="offline_access" value="1" checked' in response.text
+    assert "Verbindung ohne erneute Anmeldung automatisch erneuern" in response.text
+    fields = dict(re.findall(r'name="(request_id|csrf)" value="([^"]+)"', response.text))
+    fields.update(username="owner", password=PASSWORD, decision="allow",
+                  scope="admin", resource="https://evil.invalid/mcp", redirect_uri="https://evil.invalid/cb",
+                  state="changed", code_challenge="changed", client_id="unknown")
+    if checked:
+        fields["offline_access"] = "1"
+    response = public.post("/oauth/authorize", data=fields, headers={"Origin": BASE}, follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"].startswith(REDIRECT + "?")
+    params = parse_qs(urlsplit(response.headers["location"]).query)
+    assert params["state"] == ["a-random-client-state"]
+    code = params["code"][0]
+    row = oauth.store.one("SELECT * FROM codes WHERE hash=?", (digest(code),))
+    assert row["scope"] == expected
+    assert row["resource"] == BASE + "/mcp"
+    assert row["redirect"] == REDIRECT and row["client"] == CLIENT
+    assert row["challenge"] == CHALLENGE
+    issued = exchange(public, code)
+    assert issued.status_code == 200
+    value = issued.json()
+    assert value["scope"] == expected
+    assert ("refresh_token" in value) == checked
+    if checked:
+        family = oauth.store.one("SELECT * FROM tokens WHERE refresh_hash=?", (digest(value["refresh_token"]),))
+        assert family["refresh_expires"] - (family["expires"] - 3600) == 63072000
+        assert refresh(public, value["refresh_token"]).status_code == 200
+
+
+@pytest.mark.parametrize("selection", ["admin", "mcp:write", "true", "0"])
+def test_offline_checkbox_rejects_invalid_values(apps, selection):
+    _, public, oauth = apps
+    response = public.get("/oauth/authorize", params=auth_params(scope="mcp:read"))
+    fields = dict(re.findall(r'name="(request_id|csrf)" value="([^"]+)"', response.text))
+    fields.update(username="owner", password=PASSWORD, decision="allow", offline_access=selection)
+    response = public.post("/oauth/authorize", data=fields, headers={"Origin": BASE}, follow_redirects=False)
+    assert response.status_code in (302, 400)
+    if response.status_code == 302:
+        assert parse_qs(urlsplit(response.headers["location"]).query)["error"] == ["invalid_request"]
+    assert oauth.store.one("SELECT COUNT(*) FROM codes")[0] == 0
+
+
+def test_offline_checkbox_does_not_modify_existing_family(apps):
+    _, public, oauth = apps
+    old = tokens(public)
+    before = dict(oauth.store.one("SELECT * FROM tokens WHERE refresh_hash=?", (digest(old["refresh_token"]),)))
+    tokens(public, scope="mcp:read")
+    after = dict(oauth.store.one("SELECT * FROM tokens WHERE refresh_hash=?", (digest(old["refresh_token"]),)))
+    assert before == after
+    assert refresh(public, old["refresh_token"]).status_code == 200
+
+
+def test_offline_checkbox_duplicate_parameter_rejected(apps):
+    public = apps[1]
+    response = public.get("/oauth/authorize", params=auth_params(scope="mcp:read"))
+    fields = dict(re.findall(r'name="(request_id|csrf)" value="([^"]+)"', response.text))
+    fields.update(username="owner", password=PASSWORD, decision="allow")
+    from urllib.parse import urlencode
+    body = urlencode(list(fields.items()) + [("offline_access", "1"), ("offline_access", "admin")])
+    response = public.post("/oauth/authorize", content=body,
+                           headers={"Origin": BASE, "Content-Type": "application/x-www-form-urlencoded"})
+    assert response.status_code == 400
+
+
+def test_offline_only_opt_out_does_not_gain_resource_scope(apps):
+    _, public, oauth = apps
+    response = public.get("/oauth/authorize", params=auth_params(scope="offline_access"))
+    fields = dict(re.findall(r'name="(request_id|csrf)" value="([^"]+)"', response.text))
+    fields.update(username="owner", password=PASSWORD, decision="allow")
+    response = public.post("/oauth/authorize", data=fields, headers={"Origin": BASE}, follow_redirects=False)
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_scope"
+    assert oauth.store.one("SELECT COUNT(*) FROM codes")[0] == 0
