@@ -232,7 +232,8 @@ def test_oauth_security_headers_and_login_ux(apps):
     for response in responses:
         assert response.headers["cache-control"] == "no-store"
         assert response.headers["pragma"] == "no-cache"
-        assert response.headers["referrer-policy"] == "no-referrer"
+        expected_policy = "strict-origin" if response is responses[0] else "no-referrer"
+        assert response.headers["referrer-policy"] == expected_policy
         assert response.headers["x-content-type-options"] == "nosniff"
         assert response.headers["x-frame-options"] == "DENY"
         assert "frame-ancestors 'none'" in response.headers["content-security-policy"]

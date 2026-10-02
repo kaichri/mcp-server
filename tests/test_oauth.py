@@ -76,6 +76,23 @@ def exchange(public, code, **changes):
     return public.post("/oauth/token", data=data)
 
 
+def test_login_referrer_policy_preserves_origin_and_rejects_null(apps):
+    _, public, _ = apps
+    response = public.get("/oauth/authorize", params=auth_params())
+    assert response.status_code == 200
+    assert response.headers["referrer-policy"] == "strict-origin"
+    assert "form-action 'self' https://chatgpt.com;" in response.headers["content-security-policy"]
+    fields = dict(re.findall(r'name="(request_id|csrf)" value="([^"]+)"', response.text))
+    fields.update(username="owner", password=PASSWORD, decision="allow")
+    rejected = public.post("/oauth/authorize", data=fields, headers={"Origin": "null"})
+    assert rejected.status_code == 403
+    assert rejected.json()["error"] == "invalid_request"
+    accepted = public.post("/oauth/authorize", data=fields, headers={"Origin": BASE}, follow_redirects=False)
+    assert accepted.status_code == 302
+    assert "form-action 'self' https://chatgpt.com;" in accepted.headers["content-security-policy"]
+    assert urlsplit(accepted.headers["location"]).hostname == "chatgpt.com"
+
+
 def tokens(public, **changes):
     response = exchange(public, authorize(public, **changes))
     assert response.status_code == 200, response.text

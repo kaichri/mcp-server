@@ -36,6 +36,8 @@ SECURITY_HEADERS = {
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     "Content-Security-Policy": "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
 }
+CONSENT_CSP = SECURITY_HEADERS["Content-Security-Policy"].replace(
+    "form-action 'self'", "form-action 'self' https://chatgpt.com")
 
 
 def valid_redirect(uri):
@@ -259,6 +261,9 @@ class OAuthService(AuthorizationServer):
             params.append(("iss", self.config.public_base_url))
             headers["Location"] = urlunsplit(parts._replace(query=urlencode(params)))
         headers.update(SECURITY_HEADERS)
+        if "Location" in headers:
+            # Chromium checks form-action across the POST redirect chain.
+            headers["Content-Security-Policy"] = CONSENT_CSP
         if isinstance(body, dict):
             return JSONResponse(body, status_code=status, headers=headers)
         return Response(body, status_code=status, headers=headers)
@@ -306,8 +311,11 @@ class OAuthService(AuthorizationServer):
         # Internal HTTP is intentional. Never trust Host or forwarded headers to create OAuth URLs.
         return Request(method, self.config.public_base_url + path, pairs, headers)
 
-    def error(self, code, status=400):
-        return JSONResponse({"error": code}, status_code=status, headers=SECURITY_HEADERS)
+    def error(self, code, status=400, description=None):
+        body = {"error": code}
+        if description is not None:
+            body["error_description"] = description
+        return JSONResponse(body, status_code=status, headers=SECURITY_HEADERS)
 
     async def resource_metadata(self, request):
         return JSONResponse({"resource": self.config.resource,
@@ -357,7 +365,10 @@ class OAuthService(AuthorizationServer):
 <label>Passwort <input type="password" name="password" autocomplete="current-password" required maxlength="1024"></label>
 <button name="decision" value="allow">Zugriff erlauben</button>
 <button name="decision" value="deny" formnovalidate>Abbrechen</button></form></html>'''
-        response = HTMLResponse(page, headers=SECURITY_HEADERS)
+        # Form POSTs need the real Origin for CSRF validation. Never disclose
+        # the authorization URL's path or query in the Referer header.
+        response = HTMLResponse(page, headers={**SECURITY_HEADERS,
+            "Referrer-Policy": "strict-origin", "Content-Security-Policy": CONSENT_CSP})
         response.set_cookie(COOKIE, csrf, max_age=300, secure=True, httponly=True, samesite="lax", path="/")
         return response
 
@@ -366,21 +377,29 @@ class OAuthService(AuthorizationServer):
             return await run_in_threadpool(self.authorize_get_sync, list(request.query_params.multi_items()))
         form = await self.read_form(request)
         if form is None:
-            return self.error("invalid_request")
+            return self.error("invalid_request", description="consent_form_invalid")
         return await run_in_threadpool(self.authorize_post_sync, dict(form),
                                       request.cookies.get(COOKIE, ""), request.headers.get("origin"))
 
     def authorize_post_sync(self, form, cookie, origin):
-        if (origin != self.config.public_base_url or not cookie
-                or not secrets.compare_digest(cookie.encode(), form.get("csrf", "").encode())
-                or form.get("decision") not in ("allow", "deny")):
-            return self.error("invalid_request", 403)
+        if origin != self.config.public_base_url:
+            return self.error("invalid_request", 403, "consent_origin_mismatch")
+        if not cookie:
+            return self.error("invalid_request", 403, "consent_cookie_missing")
+        if not secrets.compare_digest(cookie.encode(), form.get("csrf", "").encode()):
+            return self.error("invalid_request", 403, "consent_form_cookie_mismatch")
+        if form.get("decision") not in ("allow", "deny"):
+            return self.error("invalid_request", 403, "consent_decision_missing_or_invalid")
         if self.store.limited("login", 10):
             return self.error("temporarily_unavailable", 429)
         with self.store.transaction():
             pending = self.store.one("SELECT * FROM pending WHERE id=?", (form.get("request_id", ""),))
-            if not pending or pending["expires"] <= time.time() or not secrets.compare_digest(pending["csrf_hash"], digest(cookie)):
-                return self.error("invalid_request", 403)
+            if not pending:
+                return self.error("invalid_request", 403, "consent_request_missing_or_already_used")
+            if pending["expires"] <= time.time():
+                return self.error("invalid_request", 403, "consent_request_expired")
+            if not secrets.compare_digest(pending["csrf_hash"], digest(cookie)):
+                return self.error("invalid_request", 403, "consent_request_cookie_mismatch")
             req = self.oauth_request("GET", "/oauth/authorize", json.loads(pending["params"]))
             # A failed login consumes the pending request; retry starts a fresh flow.
             self.store.execute("DELETE FROM pending WHERE id=?", (pending["id"],))
